@@ -162,12 +162,11 @@ function updateScene(t) {
         lerp(o.home.y + o.dir.y, o.home.y, e),
         lerp(o.home.z + o.dir.z, o.home.z, e),
       );
-      o.mesh.rotation.y = lerp(o.spin, 0, e);
-      o.mesh.rotation.x = lerp(o.spin * .4, 0, e);
-      if (local < 1) o.mesh.position.y += Math.sin(t * 1.1 + i * .7) * (1 - e) * .0012;
+      // no tumbling — parts stay axis-aligned like a technical exploded view
+      if (local < 1) o.mesh.position.y += Math.sin(t * 1.1 + i * .7) * (1 - e) * .0008;
     });
 
-    hero.rotation.y = t * .34 * (1 - smooth(clamp((p - .2) / .3))) + smooth(p) * .5;
+    hero.rotation.y = -.35 + t * .17 * (1 - smooth(clamp((p - .22) / .28))) + smooth(p) * .3;
 
     const vanish = smooth(clamp((p - .40) / .20));
     hero.scale.setScalar(lerp(4.2, .9, vanish));
@@ -293,30 +292,55 @@ loader.load('switch.glb', g => {
   hero.scale.setScalar(4.2);
   hero.position.y = .055;
 
+  /* Exploded view built from the model's MEASURED geometry, not from guesses.
+     This GLB is a cutaway: there is no closed top housing, only a rear panel
+     and two side walls. So the shell opens outward (X / Z) while the internals
+     lift straight up in their real stacking order — which is what an exploded
+     switch diagram actually looks like.
+
+     measured local Y (mm):  pins -0.5 | bottom housing 2.0 | leaves 7.0
+                             spring 8.1 | spring guide 10.5 | shoulder 14.0
+                             cross stem 17.0 | walls 7.0 | rear panel 8.0  */
+  const SPREAD = {
+    // name fragment      ->  [dx, dy, dz] in metres, and order in the sequence
+    'cross stem':          { d:[ 0,    .026,  0    ], order:0 },
+    'stem slider shoulder':{ d:[ 0,    .019,  0    ], order:1 },
+    'stem spring guide':   { d:[ 0,    .013,  0    ], order:2 },
+    'compression spring':  { d:[ 0,    .007,  0    ], order:3 },
+    'rear upper housing':  { d:[ 0,    .004, -.019 ], order:4 },
+    'copper contact leaf': { d:[ 0,   -.002,  .014 ], order:6 },
+    'pcb solder pin':      { d:[ 0,   -.015,  0    ], order:7 },
+    'switch bottom housing':{d:[ 0,   -.010,  0    ], order:8 },
+  };
+
   m.traverse(o => {
     if (!o.isMesh) return;
     o.castShadow = true;
     o.material = o.material.clone();
     const home = o.position.clone();
     const n = o.name.toLowerCase();
-    let dir, spin = (Math.random() - .5) * 1.2, delay = Math.random();
 
-    if (n.includes('cross stem') || n.includes('slider shoulder'))
-      { dir = new THREE.Vector3(0, .022, 0); delay = 0; }
-    else if (n.includes('spring guide'))
-      { dir = new THREE.Vector3(0, .015, 0); delay = .25; }
-    else if (n.includes('spring'))
-      { dir = new THREE.Vector3(0, .008, 0); delay = .45; }
-    else if (n.includes('contact leaf'))
-      { dir = new THREE.Vector3(Math.sign(home.x||1)*.014, .002, 0); delay = .6; }
-    else if (n.includes('upper housing') || n.includes('switch wall'))
-      { dir = new THREE.Vector3(Math.sign(home.x||1)*.016, .010, Math.sign(home.z||1)*.010); delay = .35; }
-    else if (n.includes('solder pin'))
-      { dir = new THREE.Vector3(0, -.016, 0); delay = .7; }
-    else
-      { dir = new THREE.Vector3(0, -.012, 0); delay = .8; }
+    let d = null, order = 5;
+    for (const frag in SPREAD) {
+      if (n.includes(frag)) { d = SPREAD[frag].d.slice(); order = SPREAD[frag].order; break; }
+    }
+    // the two side walls: swing out along their OWN side, read from the model
+    if (!d && n.includes('retained switch wall')) {
+      d = [ (home.x >= 0 ? 1 : -1) * .020, .004, 0 ];
+      order = 5;
+    }
+    if (!d) d = [0, -.010, 0];
 
-    heroParts.push({ mesh:o, home, dir, spin, delay });
+    // the leaves sit left/right of centre — push each to its own side too
+    if (n.includes('copper contact leaf')) d[0] = (home.x >= 0 ? 1 : -1) * .010;
+    if (n.includes('pcb solder pin'))      d[0] = (home.x >= 0 ? 1 : -1) * .004;
+
+    heroParts.push({
+      mesh: o, home,
+      dir: new THREE.Vector3(d[0], d[1], d[2]),
+      spin: 0,                       // no random tumbling: parts stay aligned
+      delay: order / 8,              // top part first, base last
+    });
   });
   heroReady = true;
   maybeStart();
